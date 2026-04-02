@@ -11,6 +11,7 @@ through, so you know exactly what handler to write next.
 from __future__ import annotations
 import json
 import os
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,19 +26,65 @@ _TWO_WORD_PREFIXES = frozenset([
 ])
 
 
+_MAX_SAMPLES_PER_PREFIX = 5
+_MAX_SAMPLE_BYTES = 8192
+
+
 def log_miss(command: str, output: str) -> None:
-    """Append one miss record to the misses file. Never raises."""
+    """Append one miss record to the misses file and save an output sample. Never raises."""
     try:
         _STATS_DIR.mkdir(parents=True, exist_ok=True)
         record = {
             'ts': datetime.now(timezone.utc).isoformat(),
-            'command': command.strip()[:200],   # cap length, no output content
+            'command': command.strip()[:200],
             'bytes': len(output.encode()),
         }
         with open(_MISSES_FILE, 'a') as f:
             f.write(json.dumps(record) + '\n')
     except Exception:
-        pass  # stats are best-effort, never block the proxy
+        pass
+
+    # Save output sample for handler learning (best-effort)
+    try:
+        prefix = _normalize(command)
+        samples_dir = _STATS_DIR / 'samples' / _safe_dirname(prefix)
+        samples_dir.mkdir(parents=True, exist_ok=True)
+        existing = sorted(samples_dir.glob('sample_*.txt'))
+        if len(existing) < _MAX_SAMPLES_PER_PREFIX:
+            idx = len(existing)
+            sample_path = samples_dir / f'sample_{idx}.txt'
+            # Store: command on first line, then output (capped)
+            content = f'# command: {command.strip()}\n{output[:_MAX_SAMPLE_BYTES]}'
+            sample_path.write_text(content, encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+
+def _safe_dirname(prefix: str) -> str:
+    """Convert a command prefix to a safe directory name."""
+    return re.sub(r'[^\w\-]', '_', prefix)[:60]
+
+
+def get_samples(command_prefix: str) -> list[dict]:
+    """
+    Return saved output samples for a command prefix.
+    Each entry: {'command': str, 'output': str}
+    """
+    safe = _safe_dirname(_normalize(command_prefix))
+    samples_dir = _STATS_DIR / 'samples' / safe
+    if not samples_dir.exists():
+        return []
+    results = []
+    for path in sorted(samples_dir.glob('sample_*.txt')):
+        try:
+            text = path.read_text(encoding='utf-8', errors='replace')
+            lines = text.split('\n', 1)
+            cmd = lines[0].replace('# command: ', '').strip() if lines else command_prefix
+            output = lines[1] if len(lines) > 1 else text
+            results.append({'command': cmd, 'output': output})
+        except Exception:
+            continue
+    return results
 
 
 def read_stats(top_n: int = 20) -> list[dict]:

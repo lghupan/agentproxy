@@ -667,8 +667,7 @@ class TestRegistry:
         assert get_handler("rg pattern") is not None
 
     def test_unknown_returns_none(self):
-        assert get_handler("terraform plan") is None
-        assert get_handler("make build") is None
+        assert get_handler("xyzzy_nonexistent_command_abc123") is None
         assert get_handler("") is None
 
     def test_no_false_positives(self):

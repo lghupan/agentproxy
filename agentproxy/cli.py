@@ -45,6 +45,12 @@ def main() -> None:
     stats_p.add_argument('--top', type=int, default=20, help='Number of entries to show (default: 20)')
     stats_p.add_argument('--clear', action='store_true', help='Clear the stats file')
 
+    learn_p = sub.add_parser('learn', help='Generate a compression handler from collected samples')
+    learn_p.add_argument('cmd_prefix', help='Command prefix to generate a handler for (e.g. "terraform plan")')
+    learn_p.add_argument('--samples', type=int, default=5, help='Max samples to use (default: 5)')
+    learn_p.add_argument('--model', default=None, help='LLM model to use (default: claude-sonnet-4-6 or gpt-4o)')
+    learn_p.add_argument('--dry-run', action='store_true', help='Print generated code without saving')
+
     args = parser.parse_args()
 
     if args.command == 'run':
@@ -79,6 +85,24 @@ def main() -> None:
             print(f'No miss data yet. Stats are written to {_MISSES_FILE} as the proxy runs.')
             return
         _print_stats(rows)
+
+    elif args.command == 'learn':
+        from .core.learner import learn, _USER_HANDLERS_DIR
+        try:
+            result = learn(
+                args.cmd_prefix,
+                n_samples=args.samples,
+                model=args.model,
+                dry_run=args.dry_run,
+            )
+            if not args.dry_run and result:
+                print(f'\nTest it: echo "sample output" | agentproxy compress {args.cmd_prefix!r}')
+        except ValueError as e:
+            print(f'Error: {e}', file=sys.stderr)
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f'Error: {e}', file=sys.stderr)
+            sys.exit(1)
 
 
 def _run_with_proxy(agent_cmd: list[str], host: str, port: int) -> None:
